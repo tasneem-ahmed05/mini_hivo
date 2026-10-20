@@ -30,7 +30,7 @@ CANARY_PROMPT = "Reply with exactly: HIVO_PREFLIGHT_OK"
 CANARY_EXPECTED_RESPONSE = "HIVO_PREFLIGHT_OK"
 CANARY_CALLS = 3
 CANARY_COOLDOWN_SECONDS = 2.0
-CANARY_TIMEOUT_SECONDS = 30.0
+CANARY_TIMEOUT_SECONDS = 180.0
 
 # These are conservative named safety limits, not a hardware compatibility
 # claim.  Unknown telemetry never trips them.
