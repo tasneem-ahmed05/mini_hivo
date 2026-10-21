@@ -2617,14 +2617,21 @@ def _context_sufficiency_tool(args, role="System", task_id="ROOT"):
         return "error: context_sufficiency_check is available only during a gated Worker attempt"
     checked = stage7_context.validate_sufficiency_decision(args if isinstance(args, dict) else {})
     if not checked.get("valid"):
+        # Invalid tool input is not a new gate decision. Preserve the existing
+        # authority and report its actual state instead of inventing a reset.
+        snapshot = gate.snapshot()
         result = {
-            "context_status": stage7_context.CONTEXT_STATUS_INSUFFICIENT,
-            "lifecycle_state": stage7_context.PREPARING_CONTEXT,
-            "mutation_allowed": False,
-            "reason": "Invalid structured sufficiency decision; submit the bounded schema again.",
+            "decision_valid": False,
+            "context_status": snapshot["context_status"],
+            "lifecycle_state": snapshot["state"],
+            "mutation_allowed": snapshot["mutation_allowed"],
+            "reason": "Invalid structured sufficiency decision rejected; gate state and authorization are unchanged.",
             "errors": checked.get("errors", [])[:12],
-            "failure_code": None,
-            "final": False,
+            "failure_code": snapshot["failure_code"],
+            "final": bool(snapshot["failure_code"]),
+            "round": snapshot["round"],
+            "request_count": snapshot["request_count"],
+            "anchor_hash": snapshot["anchor_hash"],
         }
     else:
         result = gate.evaluate(args)
@@ -14833,6 +14840,7 @@ def execute_agent_task(task_text, memory, messages=None, role="Builder", task_id
                     ]
                 offered_names = {item["function"]["name"] for item in offered_tools}
             if (context_tool_call and context_gate.mutation_allowed
+                    and context_tool_result.get("decision_valid") is not False
                     and context_tool_result.get("mutation_allowed")):
                 anchor = context_tool_result.get("anchor_hash")
                 repeated_sufficient_context_checks = (
