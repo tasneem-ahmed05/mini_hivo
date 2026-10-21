@@ -747,17 +747,69 @@ def _lifecycle_kinds(text):
     return kinds
 
 
+def _scoped_requirement_actions(text):
+    """Extract bounded action/object/polarity assertions, not noun overlap.
+
+    Predicates are open vocabulary: explicit negation of an unfamiliar verb
+    still conflicts with the same affirmative verb. Unknown prose is left to
+    semantic clarification rather than promoted to a certain contradiction.
+    """
+    assertions = []
+    for clause in re.split(r"[.!?;\n]|\bbut\b", str(text or "").casefold()):
+        clause = clause.strip(" ,:-")
+        if not clause:
+            continue
+        modal = re.search(r"\b(?:must|shall|should|can|may|cannot)\s+(not\s+)?", clause)
+        subject = clause[:modal.start()] if modal else ""
+        negative = bool(modal and (modal.group(1) or modal.group(0).startswith("cannot")))
+        predicate = clause[modal.end():] if modal else clause
+        prefix = re.match(r"(?:do\s+not|does\s+not|never|don['’]t)\s+", predicate)
+        if prefix:
+            negative = True
+            predicate = predicate[prefix.end():]
+        predicate = re.sub(r"^(?:always|also)\s+", "", predicate)
+        match = re.match(r"([a-z]+)\s+(.+)", predicate)
+        if not match:
+            continue
+        action, body = match.groups()
+        # Preserve exact conditions; a ban before confirmation is not a ban
+        # after confirmation. An unconditional assertion overlaps either.
+        scope = re.search(r"\b(?:if|when|after|before|until|unless|without)\b", body)
+        condition = " ".join(body[scope.start():].split()) if scope else ""
+        objects = body[:scope.start()] if scope else body
+        if action in {"remain", "remains", "stay", "stays"} and "unchanged" in objects:
+            action, objects = "preserve", subject
+        present = {"preserve", "preserves", "keep", "keeps", "retain", "retains", "support", "supports", "include", "includes", "enable", "enables"}
+        absent = {"remove", "removes", "delete", "deletes", "discard", "discards", "disable", "disables", "exclude", "excludes"}
+        if action in present | absent:
+            negative = negative != (action in absent)
+            action = "presence"
+        targets = frozenset(_conflict_target_tokens(objects))
+        if targets:
+            assertions.append((action, targets, negative, condition))
+    return assertions
+
+
+def _has_opposed_scoped_actions(left_text, right_text):
+    for la, lo, ln, lc in _scoped_requirement_actions(left_text):
+        for ra, ro, rn, rc in _scoped_requirement_actions(right_text):
+            if la == ra and lo == ro and ln != rn and (not lc or not rc or lc == rc):
+                return True
+    return False
+
+
+def _affirmative_requirement_clauses(text):
+    # Reset/persistence rules must not promote a prohibited reset to an action.
+    return ". ".join(clause for clause in re.split(r"[.!?;\n]", str(text or ""))
+                     if not re.search(r"\b(?:not|never|cannot)\b", clause, re.IGNORECASE))
+
+
 def _conflict_evidence(left, right, left_text, right_text):
     """Return bounded positive contradiction evidence, or None when uncertain."""
     if _is_conflict_heading(left_text) or _is_conflict_heading(right_text):
         return None
 
-    left_positive = _positive_target_tokens(left_text)
-    right_positive = _positive_target_tokens(right_text)
-    left_negative = _negative_target_tokens(left_text)
-    right_negative = _negative_target_tokens(right_text)
-
-    if left_positive & right_negative or right_positive & left_negative:
+    if _has_opposed_scoped_actions(left_text, right_text):
         left_effect = compact_text(left_text, 260)
         right_effect = compact_text(right_text, 260)
         return {
@@ -769,10 +821,12 @@ def _conflict_evidence(left, right, left_text, right_text):
             "can_satisfy_both": False,
         }
 
-    left_global_reset = bool(_RESET_SCOPE_RE.search(left_text))
-    right_global_reset = bool(_RESET_SCOPE_RE.search(right_text))
-    left_full_reset = bool(_RESET_FULL_SCOPE_RE.search(left_text))
-    right_full_reset = bool(_RESET_FULL_SCOPE_RE.search(right_text))
+    left_affirmative = _affirmative_requirement_clauses(left_text)
+    right_affirmative = _affirmative_requirement_clauses(right_text)
+    left_global_reset = bool(_RESET_SCOPE_RE.search(left_affirmative))
+    right_global_reset = bool(_RESET_SCOPE_RE.search(right_affirmative))
+    left_full_reset = bool(_RESET_FULL_SCOPE_RE.search(left_affirmative))
+    right_full_reset = bool(_RESET_FULL_SCOPE_RE.search(right_affirmative))
     left_persistence = bool(_PERSISTENCE_RE.search(left_text))
     right_persistence = bool(_PERSISTENCE_RE.search(right_text))
     same_lifecycle = bool(_lifecycle_kinds(left_text) & _lifecycle_kinds(right_text))

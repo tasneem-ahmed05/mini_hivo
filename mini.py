@@ -36,7 +36,7 @@ from hivo.memory import MemoryStore
 from hivo.model_policy import GEMMA_MODEL, SingleModelPolicy
 from hivo.mutation_grounding import MutationGrounding, MUTATION_TARGET_UNRESOLVED
 from hivo.target_locator import TargetLocator
-from hivo.worker_progress import WorkerProgress
+from hivo.worker_progress import NO_PROGRESS_LIMIT, WorkerProgress
 from hivo import verification_environment as verification_env
 from hivo import verification_surfaces
 from hivo import integration_targets
@@ -14428,6 +14428,8 @@ def execute_agent_task(task_text, memory, messages=None, role="Builder", task_id
     grounding = None
     progress_terminal = False
     grounding_terminal = False
+    last_sufficient_context_anchor = None
+    repeated_sufficient_context_checks = 0
     if (role == "Builder" and isinstance(execution_contract, dict)
             and recovery_state is None
             and execution_contract.get("allowed_mutation_paths")):
@@ -14830,6 +14832,17 @@ def execute_agent_task(task_text, memory, messages=None, role="Builder", task_id
                         if item.get("function", {}).get("name") != _CONTEXT_COMPLETION_TOOL
                     ]
                 offered_names = {item["function"]["name"] for item in offered_tools}
+            if (context_tool_call and context_gate.mutation_allowed
+                    and context_tool_result.get("mutation_allowed")):
+                anchor = context_tool_result.get("anchor_hash")
+                repeated_sufficient_context_checks = (
+                    repeated_sufficient_context_checks + 1
+                    if anchor and anchor == last_sufficient_context_anchor else 0
+                )
+                last_sufficient_context_anchor = anchor
+            else:
+                last_sufficient_context_anchor = None
+                repeated_sufficient_context_checks = 0
             _update_verification_cycle(verification_cycle, name, args, result)
             if RUN.get("semantic_evidence_policy") in {"compatible", "monotonic", "strict"} and name in {"run_file", "verify_web_app"}:
                 _collect_semantic_browser_evidence(name, result, task_id=task_id,
@@ -15243,11 +15256,32 @@ def execute_agent_task(task_text, memory, messages=None, role="Builder", task_id
                 break
 
             if context_tool_call:
-                if (progress is not None and progress_policy == "progress_constrained"
-                        and context_gate.mutation_allowed):
-                    # Keep the successful gate result in the current transcript
-                    # and require a fresh Worker response with the completed
-                    # gate tool removed from the offered schema.
+                if (role == "Builder" and progress is None and recovery_state is None
+                        and repeated_sufficient_context_checks >= NO_PROGRESS_LIMIT):
+                    # Greenfield Workers need not have a Stage 4A contract.
+                    # Bound repeated passes on the same anchor without
+                    # inventing authority, enabling mutations or a new policy.
+                    progress_terminal = True
+                    status = "failed"
+                    summary = (
+                        f"{WORKER_NO_MUTATION_PROGRESS}: repeated sufficient-context checks "
+                        "on the same anchor without an intervening task tool"
+                    )
+                    record_run_event(
+                        "worker_no_mutation_progress", task_id=task_id,
+                        tool_steps_used=len(evidence),
+                        no_progress_streak=repeated_sufficient_context_checks,
+                        context_anchor_hash=last_sufficient_context_anchor,
+                        reason="repeated_sufficient_context_checks",
+                    )
+                    stop = True
+                    break
+                if context_gate.mutation_allowed:
+                    # Keep the actual successful tool result and mission. A
+                    # prefix-compacted re-anchor can discard an appended gate
+                    # update, including on greenfield Workers without a Stage
+                    # 4A contract. Require a fresh response before mutation;
+                    # policy-specific tool projection remains unchanged.
                     context_reanchor_after_tool = True
                     break
                 context_feedback = _context_evidence_feedback(context_tool_result)
@@ -15699,6 +15733,23 @@ def ensure_browser(install_if_missing=False):
         return (result.returncode == 0, "Chromium installed" if result.returncode == 0 else "Chromium install failed")
 
 
+def _implicit_favicon_console_error(error, document_url, declared_icon=False):
+    """Recognize only Chromium's optional, same-origin default-icon 404.
+
+    Explicit icon resources, other assets and application console errors must
+    remain actionable. Keep excluded diagnostics in the snapshot for review.
+    """
+    from urllib.parse import urlsplit
+    if declared_icon or not error.get("text", "").startswith(
+            "Failed to load resource: the server responded with a status of 404"):
+        return False
+    source = urlsplit(error.get("url", ""))
+    document = urlsplit(document_url)
+    return (source.scheme in {"http", "https"} and source.scheme == document.scheme
+            and source.netloc == document.netloc and source.path == "/favicon.ico"
+            and not source.query)
+
+
 def browser_snapshot(url, task_id="ROOT", profile=None, verification_requirement=""):
     RUN["browser_checks"] += 1
     ok, detail = ensure_browser(False)
@@ -15708,18 +15759,33 @@ def browser_snapshot(url, task_id="ROOT", profile=None, verification_requirement
     evidence_dir.mkdir(parents=True, exist_ok=True)
     screenshot = evidence_dir / f"task_{re.sub(r'[^A-Za-z0-9_.-]+', '_', task_id)}.png"
     console_errors, page_errors, network_errors = [], [], []
+    console_error_details = []
+    explicit_favicon_requests = []
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch(**browser_launch_kwargs())
             page = browser.new_page(viewport={"width": 1440, "height": 900})
             if profile and profile.kind == "timer":
                 page.clock.install()
-            page.on("console", lambda msg: console_errors.append(msg.text) if msg.type == "error" else None)
+            page.on("console", lambda msg: console_error_details.append({
+                "text": msg.text, "url": (getattr(msg, "location", None) or {}).get("url", ""),
+            }) if msg.type == "error" else None)
+            # Page events may omit icon-named requests; combine observations
+            # with DOM resource declarations below. Never suppress a required
+            # application resource merely because of its filename.
+            page.on("request", lambda request: explicit_favicon_requests.append(request.url)
+                    if request.url.endswith("/favicon.ico") else None)
             page.on("pageerror", lambda exc: page_errors.append(str(exc)))
             page.on("response", lambda response: network_errors.append(f"{response.status} {response.url}")
                     if response.status >= 400 and not response.url.endswith("/favicon.ico") else None)
             page.goto(url, wait_until="domcontentloaded", timeout=15000)
             page.wait_for_timeout(500)
+            declared_icon = page.locator('link[rel~="icon" i]').count() > 0
+            declared_favicon_resource = page.evaluate("""() =>
+                [...document.querySelectorAll('[src], link[href], object[data]')].some(el => {
+                    try { return new URL(el.src || el.href || el.data, document.baseURI).pathname === '/favicon.ico'; }
+                    catch { return false; }
+                })""")
             title = page.title()
             text = page.locator("body").inner_text(timeout=5000)[:4000]
             runtime_state = page.evaluate(f"""() => {{
@@ -15855,9 +15921,16 @@ def browser_snapshot(url, task_id="ROOT", profile=None, verification_requirement
                 interaction_checks.extend(run_profile_interactions(page, profile))
             page.set_viewport_size({"width": 1440, "height": 900})
             page.screenshot(path=str(screenshot), full_page=True)
+            declared_icon = (declared_icon or page.locator('link[rel~="icon" i]').count() > 0
+                             or declared_favicon_resource or bool(explicit_favicon_requests))
             browser.close()
+        ignored_console_errors = [error for error in console_error_details
+                                  if _implicit_favicon_console_error(error, url, declared_icon)]
+        console_errors = [error["text"] for error in console_error_details
+                          if not _implicit_favicon_console_error(error, url, declared_icon)]
         snapshot = {"passed": False, "environment_error": False, "title": title, "url": url, "text": text,
                     "console_errors": console_errors, "page_errors": page_errors, "network_errors": network_errors,
+                    "ignored_console_errors": ignored_console_errors,
                     "runtime_state": runtime_state, "interaction_checks": interaction_checks,
                     "screenshot": str(screenshot.relative_to(WORKSPACE))}
         effective = profile or infer_web_profile("web", {})
@@ -19591,7 +19664,9 @@ def repair_task(task, contract, failure_evidence, memory, node_context, parent_g
             "root_goal": ((RUN.get("source_contract") or {}).get("goal")
                           if isinstance(RUN.get("source_contract"), dict) else None)
             or task.get("goal"),
-            "parent_goal": task.get("parent_goal") or RUN.get("parent_goal") or parent_goal,
+            # Match the Builder/candidate authority anchor. The caller's
+            # parent_goal argument is an execution summary, not a stable goal.
+            "parent_goal": task.get("parent_goal") or RUN.get("parent_goal"),
             "local_task": task.get("goal"),
             "requirements": task.get("done_when", []),
             "constraints": (contract or {}).get("constraints", []) if isinstance(contract, dict) else [],
