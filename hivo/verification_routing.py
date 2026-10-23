@@ -1227,53 +1227,35 @@ class VerificationApplicabilityAnalyzer:
 
 def _parse_result(value: Any) -> tuple[str | None, bool]:
     if isinstance(value, dict):
-        explicit_status = str(
-            value.get("verification_status") or value.get("status")
-            or value.get("result") or ""
-        ).upper()
+        explicit_status = str(value.get("verification_status") or value.get("status")
+                              or value.get("result") or "").upper()
         if explicit_status == SKIPPED_NOT_APPLICABLE:
             return None, False
-        if explicit_status in {PASS, "PASSED", "SUCCESS", "SUCCEEDED"}:
-            return PASS, True
-        if explicit_status in {FAIL, "FAILED", "FAILURE"}:
+        # Conflicting explicit failure cannot be promoted by a success label.
+        if value.get("passed") is False or explicit_status in {FAIL, "FAILED", "FAILURE"}:
             return FAIL, True
         if explicit_status in {PENDING, NOT_RUN, MISSING_RECEIPT}:
             return None, False
-        if value.get("passed") is True:
+        if explicit_status in {PASS, "PASSED", "SUCCESS", "SUCCEEDED"} or value.get("passed") is True:
             return PASS, True
-        if value.get("passed") is False:
-            return FAIL, True
-        if "passed" in value:
-            return None, False
+        return None, False
     text = str(value or "").strip()
     if text.casefold().startswith("[not_applicable]"):
         return None, False
-    payload = None
     try:
-        parsed = json.loads(text)
-        if isinstance(parsed, dict):
-            payload = parsed
+        payload = json.loads(text)
     except (TypeError, ValueError):
-        pass
+        payload = None
     if isinstance(payload, dict):
-        explicit_status = str(
-            payload.get("verification_status") or payload.get("status")
-            or payload.get("result") or ""
-        ).upper()
-        if explicit_status == SKIPPED_NOT_APPLICABLE:
-            return None, False
-        if explicit_status in {PASS, "PASSED", "SUCCESS", "SUCCEEDED"}:
-            return PASS, True
-        if explicit_status in {FAIL, "FAILED", "FAILURE"}:
-            return FAIL, True
-        if explicit_status in {PENDING, NOT_RUN, MISSING_RECEIPT}:
-            return None, False
-        if payload.get("passed") is True:
-            return PASS, True
-        if payload.get("passed") is False:
-            return FAIL, True
-        if "passed" in payload:
-            return None, False
+        return _parse_result(payload)
+    # Keep legacy command receipts; never search malformed JSON for 'passed'.
+    if re.match(r"^\[exit_code=\d+\]", text, re.I):
+        code = int(re.match(r"^\[exit_code=(\d+)\]", text, re.I).group(1))
+        return (PASS if code == 0 else FAIL), True
+    if text.startswith(("{", "[", '"', "```")):
+        return None, False
+    if re.search(r"[\"'](?:passed|verification_status|status)[\"']\s*:", text):
+        return None, False
     if re.search(r"\[exit_code=0\]", text, re.I) or re.search(r"\b(?:pass|passed|success|succeeded)\b", text, re.I):
         return PASS, True
     if re.search(r"\[exit_code=[1-9]\d*\]", text, re.I) or re.search(r"\b(?:fail|failed|failure|syntaxerror|assertionerror)\b", text, re.I):
@@ -1622,7 +1604,10 @@ def _evidence_matches(route: dict, item: dict) -> bool:
     if tool not in {"run_file", "run_command", "verify_web_app"}:
         return False
     if route.get("kind") == BROWSER:
-        return tool == "verify_web_app"
+        expected = _path(route.get("target"))
+        observed = _evidence_target(item)
+        return bool(tool == "verify_web_app" and expected and observed
+                    and expected.casefold() == observed.casefold())
     if _is_direct_route(route):
         expected_target = _path(route.get("target"))
         observed_target = _evidence_target(item)
@@ -2149,6 +2134,14 @@ def _aggregate_verification_routes(
             elif route["result"] == FAIL:
                 actual_failures.append(route)
             continue
+        # The controller's current failed browser check is authoritative;
+        # older or weaker tool receipts cannot overwrite it with a pass.
+        # Explicit semantic-policy routing above retains its existing contract.
+        if (kind == BROWSER and isinstance(browser_result, dict)
+                and _parse_result(browser_result) == (FAIL, True)):
+            route["result"] = FAIL
+            actual_failures.append(route)
+            continue
         if strict_evidence_context is not None and kind == FOCUSED_TEST and not (
             _route_authority_key(route) or route.get("authority_type") or _is_direct_route(route)
         ):
@@ -2164,6 +2157,27 @@ def _aggregate_verification_routes(
             item for item in evidence
             if _evidence_is_related(route, item)
         ]
+        if kind == BROWSER and not (_route_authority_key(route) or route.get("authority_type")):
+            # Only equivalent, explicitly role-bound browser receipts supersede
+            # each other. A weaker profile or another role's failure stays live.
+            latest = {}
+            for index, item in enumerate(matched):
+                value = item.get("result")
+                try:
+                    payload = value if isinstance(value, dict) else json.loads(str(value))
+                except (TypeError, ValueError):
+                    payload = {}
+                profile = payload.get("verification_profile") if isinstance(payload, dict) else None
+                role = item.get("role")
+                # Unavailable outcomes are retained independently: they cannot
+                # erase an outstanding valid failure merely by arriving later.
+                # Freshness here is chronological receipt order, scoped to the
+                # same role, matched target and exact verification profile.
+                outcome, available = _parse_result(value)
+                equivalent = role and isinstance(profile, dict) and available and outcome in {PASS, FAIL}
+                key = (str(role), _evidence_target(item), json.dumps(profile, sort_keys=True)) if equivalent else (index,)
+                latest[key] = (index, item)
+            matched = [item for index, item in sorted(latest.values(), key=lambda pair: pair[0])]
         states = [
             _parse_result(item.get("result"))[0]
             for item in matched
@@ -2176,7 +2190,8 @@ def _aggregate_verification_routes(
         elif FAIL in states:
             route["result"] = FAIL
             actual_failures.append(route)
-        elif PASS in states or (kind == BROWSER and route.get("result") == PASS):
+        elif PASS in states or (kind == BROWSER and isinstance(browser_result, dict)
+                                and _parse_result(browser_result) == (PASS, True)):
             route["result"] = PASS
             actual_passes.append(route)
         elif route.get("result") == FAIL:

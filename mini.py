@@ -26,6 +26,7 @@ from hivo.context import compact_messages
 from hivo.evidence import evidence_for_review
 from hivo.evidence import MUTATION_TOOLS
 from hivo.evidence import mutation_failure_record
+from hivo.evidence import project_tool_evidence_result
 from hivo.evidence import result_failed as evidence_result_failed
 from hivo.evidence import result_not_applicable
 from hivo.evidence import result_is_tool_rejection
@@ -15164,8 +15165,8 @@ def execute_agent_task(task_text, memory, messages=None, role="Builder", task_id
                         summary = recovery_terminal_state
                         stop = True
                         break
-            projected = str(result)[:1600]
-            evidence.append({"tool": name, "target": target, "result": projected})
+            projected = project_tool_evidence_result(name, result)
+            evidence.append({"tool": name, "target": target, "result": projected, "role": role})
             memory = update_memory(memory, name, args, result, role=role, task_id=task_id)
             messages.append({"role": "tool", "tool_name": name, "content": str(result)})
             event(f"[TOOL] {name} {compact_text(target, 80)}", role=role, task=task_id, tool=name)
