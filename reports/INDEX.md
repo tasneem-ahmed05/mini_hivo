@@ -1,6 +1,6 @@
 # Measured experiment results
 
-This index identifies the final report and machine-readable measurements for every **completed** experiment. Read each report's denominators and limitations before comparing percentages. Earlier or interim report variants are retained in the same experiment directory, with their original relative paths, to show how the evidence evolved. The [experiment timeline](../docs/EXPERIMENT_HISTORY.md) links the corresponding commits.
+This index identifies measured results and explicitly labeled diagnostic or partial checkpoints. Completion is specific to each report's stated boundary; offline validation is not full live E2E validation. Read each report's denominators and limitations before comparing percentages. Earlier or interim report variants are retained in the same experiment directory, with their original relative paths, to show how the evidence evolved. The [experiment timeline](../docs/EXPERIMENT_HISTORY.md) links the earlier corresponding commits.
 
 | Experiment | Final narrative | Numeric results | Additional measured evidence |
 |---|---|---|---|
@@ -22,6 +22,7 @@ This index identifies the final report and machine-readable measurements for eve
 | 16 | [report](experiment16/experiment16-report.md) | [JSON](experiment16/experiment16-results.json) | Timer/Python first-blocker diagnosis |
 | 17 | [partial classification checkpoint](experiment17/classification-protocol.md) | [Protocol JSON](experiment17/classification-protocol.json); **no completed final run results yet** | [Runbook](experiment17/RUNBOOK.md); fresh execution is in progress outside this repository |
 | 18 | [diagnostic report](experiment18/experiment18-report.md), [handoff](experiment18/EXPERIMENT18B_HANDOFF.md) | [JSON](experiment18/experiment18-findings.json); **partial diagnostic and verification replay** | Context sufficiency, mutation grounding, tool-contract mismatch, and verification follow-up; positive control verified |
+| 19 | [Verification Outcome Integrity](experiment19/experiment19-report.md) | [JSON](experiment19/experiment19-results.json); **offline-validated; full live E2E pending** | [Manifest](experiment19/manifest.json), [paired protocol](experiment19/supporting/comparison.json), [selected tests](experiment19/supporting/selected-tests.json), [runbook](experiment19/RUNBOOK.md); 16 cases/arm and 103 selected methods are separate measures |
 
 The JSON files for Experiments 1–11 and the supporting comparison/matrix JSON for Experiments 12–15 were copied byte-for-byte from the local experiment directories. The source and repository copies were checked with SHA-256. Reports for Experiments 12–16 were already tracked. Raw workspaces, model transcripts, and some native verifier payloads remain outside Git; they are not silently counted as uploaded evidence.
 
