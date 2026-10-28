@@ -12,13 +12,25 @@ from hivo.verification import infer_web_profile
 
 
 PATTERNS = {
-    "keyboard_movement": r"\b(?:movement|move|keyboard|arrow|wasd|input handling)\b",
-    "collection_updates_state": r"\b(?:collect(?:ing|ion)?|scoring|score increases|pickup)\b",
+    "keyboard_movement": r"\b(?:movement|move|keyboard|arrow|wasd|input handling|start)\b",
+    "collection_updates_state": r"\b(?:collect(?:s|ing|ion)?|scoring|score increases|pickup)\b",
     "collision_game_over": r"\b(?:collision|collid\w*|obstacle|game[- ]over)\b",
     "restart_resets_state": r"\b(?:restart|reset(?:s)? (?:the )?round)\b",
     "score_persistence": r"\b(?:persist\w*|localstorage|best score|high score)\b",
     "touch_control": r"\b(?:touch|mobile controls)\b",
-    "goal_win_state": r"\b(?:win|won|100 points|delivery complete)\b",
+    "goal_win_state": r"\b(?:win(?:ning)?|won|100 points|delivery complete)\b",
+}
+# Recognize complete declared clauses, not any sentence containing one keyword.
+# Unknown conjunctions fall back to the full source obligations. In particular,
+# 'freeze movement and scoring' is a terminal duty, not collection ownership.
+CLAUSES = {
+    "keyboard_movement": r"(?:keyboard|player) movement works(?: inside arena bounds)?\.?",
+    "collection_updates_state": r"(?:collecting coins|coin collection) updates (?:the )?score\.?",
+    "collision_game_over": r"(?:obstacle collision (?:causes|triggers) game over|game over freezes movement and scoring)\.?",
+    "restart_resets_state": r"restart resets (?:the )?round\.?",
+    "score_persistence": r"(?:best|high) score persists across reload\.?",
+    "touch_control": r"touch controls work\.?",
+    "goal_win_state": r"winning stops movement and scoring\.?",
 }
 FOUNDATION = re.compile(
     r"(?:the )?(?:standalone )?(?:page|html|document|canvas|title) "
@@ -61,11 +73,13 @@ def scope_contract(task, contract, source_contract):
     conditions = _strings(task.get("done_when"))
     if not conditions or len(conditions) != len(task.get("done_when", [])):
         return result
+    if re.search(r"\b(?:complete|entire|all requirements)\b", str(task.get("goal", "")), re.I):
+        return result
     required = set()
     bridge = False
     for condition in conditions:
-        names = {name for name, pattern in PATTERNS.items() if re.search(pattern, condition, re.I)}
-        explicit_bridge = bool(re.search(r"\bAGENT_GAME\b", condition))
+        names = {name for name, pattern in CLAUSES.items() if re.fullmatch(pattern, condition.strip(), re.I)}
+        explicit_bridge = bool(re.fullmatch(r"expose AGENT_GAME with getState\(\)\.?", condition.strip(), re.I))
         if not names and not explicit_bridge and not FOUNDATION.fullmatch(condition.strip()):
             return result  # Unsupported prose cannot silently reduce checks.
         required.update(names)

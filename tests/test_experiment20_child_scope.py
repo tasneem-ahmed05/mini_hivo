@@ -88,7 +88,7 @@ class Experiment20ScopeTests(unittest.TestCase):
 
     def test_flow_child_keeps_restart_and_persistence(self):
         self.assertFalse(self.check(self.child(4), ["restart_resets_state"], bridge=True)["passed"])
-        self.assertEqual(set(self.profiles[-1].required_interactions), {"restart_resets_state", "score_persistence", "collision_game_over"})
+        self.assertEqual(set(self.profiles[-1].required_interactions), {"restart_resets_state", "score_persistence", "collision_game_over", "keyboard_movement"})
 
     def test_explicit_game_over_assignment_requires_terminal_check(self):
         task = self.child(4); task["done_when"] = ["Game Over freezes movement and scoring."]
@@ -272,3 +272,31 @@ class Experiment20ScopeTests(unittest.TestCase):
         mini.RUN["source_contract"] = {}
         self.assertFalse(self.check(self.child())["passed"])
         self.assertTrue(self.profiles[-1].require_game_bridge)
+
+    def test_mixed_interactive_clause_does_not_hide_unknown_responsibility(self):
+        task = self.child(2)
+        task["done_when"] = ["Keyboard movement works inside arena bounds and supports winning."]
+        self.check(task)
+        self.assertEqual(set(self.profiles[-1].required_interactions), ALL_GAME_CHECKS)
+
+    def test_terminal_freeze_clause_does_not_assign_coin_collection(self):
+        task = self.child(4); task["done_when"] = ["Game Over freezes movement and scoring."]
+        self.check(task)
+        self.assertNotIn("collection_updates_state", self.profiles[-1].required_interactions)
+
+    def test_complete_game_child_cannot_claim_foundation_only(self):
+        task = self.child(); task["goal"] = "Build the complete Coin Courier game"
+        self.assertFalse(self.check(task)["passed"])
+        self.assertEqual(set(self.profiles[-1].required_interactions), ALL_GAME_CHECKS)
+
+    def test_touch_child_keeps_its_owned_behavior(self):
+        task = self.child(); task.update(goal="Implement touch controls", done_when=["Touch controls work."])
+        self.assertFalse(self.check(task)["passed"])
+        self.assertEqual(set(self.profiles[-1].required_interactions), {"touch_control"})
+        self.assertTrue(self.check(task, ["touch_control"], bridge=True)["passed"])
+
+    def test_win_child_keeps_terminal_behavior_without_collection_ownership(self):
+        task = self.child(); task.update(goal="Implement winning transition", done_when=["Winning stops movement and scoring."])
+        self.assertFalse(self.check(task)["passed"])
+        self.assertEqual(set(self.profiles[-1].required_interactions), {"goal_win_state"})
+        self.assertTrue(self.check(task, ["goal_win_state"], bridge=True)["passed"])
