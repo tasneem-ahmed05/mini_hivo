@@ -120,6 +120,13 @@ Further review found two unsafe/permissive mappings: a sentence with a recognize
 
 ## Conclusion and reproducibility
 
+The [methodology review](METHODOLOGY-REVIEW.md) compares actual Experiments 1–19
+and records the reproducibility gaps corrected before publication. The explicit
+[case protocol](protocol.json) supplies the fixed assertions and expected arm
+outcomes; refreshed input/environment provenance is retained separately from
+the original results. This review does not change production treatment or add
+new live validation.
+
 The hypothesis is supported on the declared offline cases: recognized child milestones avoid premature downstream checks, prior accepted behavior stays a fresh duty, and root cannot discard original configured game requirements. This is a reviewable local implementation with bounded claims, not demonstrated autonomous Coin Courier completion.
 
 See [RUNBOOK](RUNBOOK.md), [results JSON](experiment20-results.json), [manifest](manifest.json), [tests](../../tests/test_experiment20_child_scope.py) and supporting files. Raw logs remain LOCAL-ONLY in the separate Experiment 20 submission evidence directory; original Run-010 logs/database/game and all older worktrees remain preserved.

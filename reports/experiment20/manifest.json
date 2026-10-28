@@ -29,5 +29,13 @@
     "live browser interactions",
     "full original acceptance criteria",
     "live root completion"
+  ],
+  "case_protocol": "protocol.json",
+  "methodology_review": "METHODOLOGY-REVIEW.md",
+  "review_provenance": "supporting/review-provenance.json",
+  "reproduction_checks": [
+    "Pinned tracked Python runtime and test inputs; inherited inputs also identical to baseline",
+    "Expected per-case assertion outcomes and selected-method counts required; skips rejected",
+    "Python/platform/package versions and normalized source/runner hashes recorded"
   ]
 }

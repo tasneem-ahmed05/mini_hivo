@@ -13,6 +13,18 @@ conditions**, not recovered original mission payloads. Scoped Git attributes
 preserve its LF bytes. [manifest.json](manifest.json) records canonical source
 and fixture hashes. Production/fixture drift is rejected by the probe.
 
+The [case protocol](protocol.json) defines each assertion and its expected
+baseline/treatment outcome. The [methodology review](METHODOLOGY-REVIEW.md)
+compares the package with the actual Experiments 1–19 reporting conventions.
+Both runners also check tracked Python runtime/test inputs against treatment
+Git blobs and verify inherited dependencies match baseline. Every fresh output
+has `provenance.json` with Python/platform/package versions and input/runner
+hashes. New metadata does not retroactively describe historical outputs.
+Success also requires the declared test counts and no skips. The paired runner
+checks expected results in both arms; baseline defects are expected measurements,
+not permission for additional unexplained failures. Do not combine the mutually
+exclusive `--focused-only` and `--baseline-existing` modes.
+
 ## Paired controlled comparison
 
 From repository root, choose a new external output directory:

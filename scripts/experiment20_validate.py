@@ -6,6 +6,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+from experiment20_provenance import capture
 
 ROOT = Path(__file__).resolve().parents[1]
 SUITES = ["test_experiment20_child_scope.py", "test_experiment17_field_scoped_profile.py", "test_verified_child_integration.py", "test_experiment9_integration_targets.py", "test_verification_outcome_integrity.py", "test_evidence_policy.py",
@@ -13,6 +14,7 @@ SUITES = ["test_experiment20_child_scope.py", "test_experiment17_field_scoped_pr
           "test_experiment13_monotonic.py", "test_experiment18a_schema_feedback.py",
           "test_context_sufficiency_gate.py", "test_greenfield_context_progress.py",
           "test_repair_impact_anchor.py"]
+EXPECTED_COUNTS = dict(zip(SUITES, (34, 5, 22, 12, 30, 9, 15, 10, 9, 9, 9, 9, 3)))
 
 
 def main():
@@ -22,12 +24,16 @@ def main():
     parser.add_argument("--baseline-existing", action="store_true",
                         help="Run existing suites with pinned baseline mini.py loaded in memory")
     args = parser.parse_args()
+    if args.focused_only and args.baseline_existing:
+        parser.error("--focused-only and --baseline-existing are mutually exclusive")
+    provenance = capture()
     if not args.baseline_existing:
         for name in ("mini.py", "hivo/verification_scope.py"):
             pinned = subprocess.check_output(["git", "show", "a91062551c9b346a35eb4abb5f18a6f64f95a72b:" + name], cwd=ROOT).decode("utf-8")
             if (ROOT / name).read_text(encoding="utf-8") != pinned.replace("\r\n", "\n"):
                 raise RuntimeError("Treatment source drift: " + name)
     args.output_dir.mkdir(parents=True, exist_ok=False)
+    (args.output_dir / "provenance.json").write_text(json.dumps(provenance, indent=2) + "\n", encoding="utf-8")
     temporary = args.output_dir.resolve() / "tmp"
     temporary.mkdir()
     env = dict(os.environ, TEMP=str(temporary), TMP=str(temporary),
@@ -59,10 +65,11 @@ def main():
         row = {"pattern": suite, "tests": int(counts[-1]) if counts else None,
                "exit_code": process.returncode,
                "summary": re.findall(r"^OK.*$|^FAILED.*$", process.stdout, re.M)}
+        row["matches_declared_cohort"] = row["tests"] == EXPECTED_COUNTS[suite] and row["summary"] == ["OK"]
         rows.append(row)
         print(json.dumps(row), flush=True)
     (args.output_dir / "results.json").write_text(json.dumps(rows, indent=2) + "\n", encoding="utf-8")
-    return int(any(r["exit_code"] != 0 for r in rows))
+    return int(any(r["exit_code"] != 0 or not r["matches_declared_cohort"] for r in rows))
 
 
 if __name__ == "__main__":

@@ -10,6 +10,7 @@ import sys
 import types
 import unittest
 from unittest.mock import patch
+from experiment20_provenance import capture
 
 ROOT = Path(__file__).resolve().parents[1]
 BASELINE = "d15b6068f78dd5b9e46daacd81f5543af5c2cf89"
@@ -47,9 +48,9 @@ def arm(label):
     with patch.object(mini, "ask_ollama", side_effect=AssertionError("Live model forbidden")), \
             patch.object(mini, "structured_model_call", side_effect=AssertionError("Live provider forbidden")):
         result = unittest.TextTestRunner(stream=stream, verbosity=2).run(suite)
-    failed = {t.id().split(".")[-1] for t, _ in result.failures + result.errors}
+    failed = {t.id().split(".")[-1] for t, _ in result.failures + result.errors + result.skipped}
     print(json.dumps({"label": label, "methods": result.testsRun,
-                      "failures": len(result.failures), "errors": len(result.errors),
+                      "failures": len(result.failures), "errors": len(result.errors), "skips": len(result.skipped),
                       "cases": [{"case_id": name, "passed": "test_" + name not in failed} for name in CASES],
                       "log": stream.getvalue()}))
 
@@ -64,7 +65,9 @@ def main():
         return 0
     if args.output_dir is None:
         parser.error("--output-dir is required")
+    provenance = capture()
     args.output_dir.mkdir(parents=True, exist_ok=False)
+    (args.output_dir / "provenance.json").write_text(json.dumps(provenance, indent=2) + "\n", encoding="utf-8")
     for path in ("mini.py", "hivo/verification_scope.py", "tests/test_experiment20_child_scope.py",
                  "tests/fixtures/experiment20_scope.json"):
         pinned = subprocess.check_output(["git", "show", TREATMENT + ":" + path], cwd=ROOT).decode("utf-8")
@@ -89,7 +92,14 @@ def main():
         comparison["arms"][label] = record
     (args.output_dir / "comparison.json").write_text(json.dumps(comparison, indent=2) + "\n", encoding="utf-8")
     print(json.dumps({label: {k: v for k, v in row.items() if k != "cases"} for label, row in comparison["arms"].items()}))
-    return int(comparison["arms"]["treatment"]["failures"] != 0 or comparison["arms"]["treatment"]["errors"] != 0)
+    protocol = json.loads((ROOT / "reports/experiment20/protocol.json").read_text(encoding="utf-8"))
+    expected = {case["case_id"]: case for case in protocol["cases"]}
+    valid = set(expected) == set(CASES)
+    for label, record in comparison["arms"].items():
+        valid = valid and record["methods"] == len(CASES) and record["errors"] == record["skips"] == 0
+        valid = valid and all(row["passed"] == expected[row["case_id"]][label + "_assertion_passed"]
+                              for row in record["cases"])
+    return int(not valid)
 
 
 if __name__ == "__main__":

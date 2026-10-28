@@ -42,5 +42,13 @@
     "invalid-scope generic-web fallback corrected",
     "explicit Game Over mapping omission corrected",
     "permissive mixed clauses and terminal freeze misassignment corrected with full-clause matching"
-  ]
+  ],
+  "methodology_review": {
+    "production_treatment_unchanged": true,
+    "paired": "supporting/review-comparison.json",
+    "selected": "supporting/review-selected-tests.json",
+    "existing_baseline": "supporting/review-baseline-existing.json",
+    "provenance": "supporting/review-provenance.json",
+    "counts_are_repeat_measurements_not_additional_cases": true
+  }
 }
