@@ -22,6 +22,11 @@ def main():
     parser.add_argument("--baseline-existing", action="store_true",
                         help="Run existing suites with pinned baseline mini.py loaded in memory")
     args = parser.parse_args()
+    if not args.baseline_existing:
+        for name in ("mini.py", "hivo/verification_scope.py"):
+            pinned = subprocess.check_output(["git", "show", "a91062551c9b346a35eb4abb5f18a6f64f95a72b:" + name], cwd=ROOT).decode("utf-8")
+            if (ROOT / name).read_text(encoding="utf-8") != pinned.replace("\r\n", "\n"):
+                raise RuntimeError("Treatment source drift: " + name)
     args.output_dir.mkdir(parents=True, exist_ok=False)
     temporary = args.output_dir.resolve() / "tmp"
     temporary.mkdir()

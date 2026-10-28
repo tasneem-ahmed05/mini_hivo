@@ -13,6 +13,7 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 BASELINE = "d15b6068f78dd5b9e46daacd81f5543af5c2cf89"
+TREATMENT = "a91062551c9b346a35eb4abb5f18a6f64f95a72b"
 CASES = [
     "foundation_controller_does_not_require_later_movement_collection",
     "foundation_worker_tool_uses_same_scope",
@@ -64,10 +65,15 @@ def main():
     if args.output_dir is None:
         parser.error("--output-dir is required")
     args.output_dir.mkdir(parents=True, exist_ok=False)
+    for path in ("mini.py", "hivo/verification_scope.py", "tests/test_experiment20_child_scope.py",
+                 "tests/fixtures/experiment20_scope.json"):
+        pinned = subprocess.check_output(["git", "show", TREATMENT + ":" + path], cwd=ROOT).decode("utf-8")
+        if (ROOT / path).read_text(encoding="utf-8") != pinned.replace("\r\n", "\n"):
+            raise RuntimeError("Treatment/fixture drift: " + path)
     temporary = args.output_dir.resolve() / "tmp"
     temporary.mkdir()
     env = dict(os.environ, TEMP=str(temporary), TMP=str(temporary), PYTHONDONTWRITEBYTECODE="1", PYTHONIOENCODING="utf-8")
-    comparison = {"experiment": 20, "baseline": BASELINE,
+    comparison = {"experiment": 20, "baseline": BASELINE, "treatment": TREATMENT,
                   "boundary": "controlled fixtures, production routes/gates, scripted verifier observations",
                   "model_calls": 0, "browser_calls": 0, "live_e2e": False,
                   "fixture_sha256": hashlib.sha256((ROOT / "tests/fixtures/experiment20_scope.json").read_bytes()).hexdigest(),
